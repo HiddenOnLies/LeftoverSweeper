@@ -9,7 +9,7 @@
 *Carpetas fantasma, claves de registro huérfanas, accesos directos que llevan a ninguna parte…
 LimpiaResiduos las encuentra, te las enseña y las retira sin miedo, porque todo se puede deshacer.*
 
-[![Descargar](https://img.shields.io/badge/⬇_Descargar-LimpiaResiduos.exe-0f766e?style=for-the-badge)](https://github.com/__OWNER__/LimpiaResiduos/releases/latest/download/LimpiaResiduos.exe)
+[![Descargar](https://img.shields.io/badge/⬇_Descargar-LimpiaResiduos.exe-0f766e?style=for-the-badge)](https://github.com/HiddenOnLies/LimpiaResiduos/releases/latest/download/LimpiaResiduos.exe)
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
@@ -91,7 +91,7 @@ Cuando compruebes que todo va bien, vacía la cuarentena desde su pestaña.
 
 ### Opción A: el ejecutable (recomendada)
 
-1. Descarga **[LimpiaResiduos.exe](https://github.com/__OWNER__/LimpiaResiduos/releases/latest/download/LimpiaResiduos.exe)** desde las [Releases](https://github.com/__OWNER__/LimpiaResiduos/releases).
+1. Descarga **[LimpiaResiduos.exe](https://github.com/HiddenOnLies/LimpiaResiduos/releases/latest/download/LimpiaResiduos.exe)** desde las [Releases](https://github.com/HiddenOnLies/LimpiaResiduos/releases).
 2. Ábrelo. No hace falta instalarlo.
 3. Pulsa **Escanear el equipo**.
 
@@ -103,7 +103,7 @@ Cuando compruebes que todo va bien, vacía la cuarentena desde su pestaña.
 Requiere Python 3.12 o superior y nada más.
 
 ```bash
-git clone https://github.com/__OWNER__/LimpiaResiduos.git
+git clone https://github.com/HiddenOnLies/LimpiaResiduos.git
 cd LimpiaResiduos
 python LimpiaResiduos/app.py
 ```
