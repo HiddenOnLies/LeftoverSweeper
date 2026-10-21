@@ -1,8 +1,8 @@
-"""Limpieza reversible: todo pasa primero por la cuarentena, desde donde se puede restaurar.
+"""Reversible cleaning: everything goes through the quarantine first, where it can be restored.
 
-- Carpetas y archivos se mueven a la cuarentena.
-- Las claves del registro se exportan a un .reg antes de borrarlas.
-- Los valores del registro se guardan en el manifiesto antes de borrarlos.
+- Folders and files are moved into the quarantine.
+- Registry keys are exported to a .reg file before being deleted.
+- Registry values are stored in the manifest before being deleted.
 """
 import json
 import os
@@ -22,16 +22,16 @@ _REG_EXE = os.path.join(rules.WINDIR, "System32", "reg.exe")
 _NO_WINDOW = 0x08000000
 MANIFEST = "manifest.json"
 
-STATUS_QUARANTINED = "en cuarentena"
-STATUS_RESTORED = "restaurado"
-STATUS_PURGED = "eliminado"
+STATUS_QUARANTINED = "quarantined"
+STATUS_RESTORED = "restored"
+STATUS_PURGED = "deleted"
 
 
 def _reg(*args):
     r = subprocess.run([_REG_EXE, *args], capture_output=True, creationflags=_NO_WINDOW)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).decode("oem", "replace").strip()
-        raise OSError(msg or f"reg.exe terminó con código {r.returncode}")
+        raise OSError(msg or f"reg.exe exited with code {r.returncode}")
 
 
 def _force_remove(func, path, _exc):
@@ -48,10 +48,10 @@ def _same_drive(a, b):
 
 
 def _move_out(src, dest):
-    """Mueve src a dest sin dejar copias a medias.
+    """Move src to dest without ever leaving half-made copies.
 
-    Primero se renombra en su sitio: si algún archivo está en uso, Windows lo
-    impide y no se toca nada."""
+    It is renamed in place first: if any file is in use, Windows refuses and
+    nothing is touched."""
     if _same_drive(src, dest):
         os.rename(src, dest)
         return
@@ -88,16 +88,16 @@ def _decode_value(blob):
 def validate(item):
     if item.kind in ("folder", "file"):
         if not os.path.lexists(item.path):
-            raise ValueError("Ya no existe.")
+            raise ValueError("It no longer exists.")
         rules.check_fs_path(item.path)
     elif item.kind in ("regkey", "regvalue"):
         rules.check_reg_path(item.path, item.kind)
     else:
-        raise ValueError(f"Tipo desconocido: {item.kind}")
+        raise ValueError(f"Unknown type: {item.kind}")
 
 
 class Session:
-    """Una carpeta de cuarentena por cada limpieza."""
+    """One quarantine folder per cleaning run."""
 
     def __init__(self):
         stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -112,8 +112,8 @@ class Session:
 
     def _ensure(self):
         if not self._created:
-            os.makedirs(os.path.join(self.dir, "archivos"))
-            os.makedirs(os.path.join(self.dir, "registro"))
+            os.makedirs(os.path.join(self.dir, "files"))
+            os.makedirs(os.path.join(self.dir, "registry"))
             self._created = True
 
     def _save(self):
@@ -128,12 +128,12 @@ class Session:
             "date": time.strftime("%Y-%m-%d %H:%M:%S"), "status": STATUS_QUARANTINED,
         }
         if item.kind in ("folder", "file"):
-            name = os.path.basename(item.path.rstrip("\\")) or "elemento"
-            dest = os.path.join(self.dir, "archivos", f"{idx:04d}_{name}")
+            name = os.path.basename(item.path.rstrip("\\")) or "item"
+            dest = os.path.join(self.dir, "files", f"{idx:04d}_{name}")
             _move_out(item.path, dest)
             rec["backup"] = dest
         elif item.kind == "regkey":
-            backup = os.path.join(self.dir, "registro", f"{idx:04d}.reg")
+            backup = os.path.join(self.dir, "registry", f"{idx:04d}.reg")
             _reg("export", item.path, backup, "/y")
             try:
                 _reg("delete", item.path, "/f")
@@ -146,7 +146,7 @@ class Session:
                 data, kind = winreg.QueryValueEx(key, item.value)
                 rec["backup_value"] = _encode_value(data, kind)
                 self.records.append(rec)
-                self._save()  # la copia queda guardada antes de borrar
+                self._save()  # the backup is saved before deleting
                 try:
                     winreg.DeleteValue(key, item.value)
                 except Exception:
@@ -160,42 +160,42 @@ class Session:
 
 
 def clean(items, progress=lambda m: None):
-    """Mueve los elementos a la cuarentena. Devuelve (hechos, [(elemento, error)])."""
+    """Move the items into the quarantine. Returns (done, [(item, error)])."""
     session = Session()
     done, errors = [], []
     for i, item in enumerate(items, 1):
-        progress(f"Moviendo a cuarentena ({i}/{len(items)}): {item.display_path}")
+        progress(f"Moving to quarantine ({i}/{len(items)}): {item.display_path}")
         try:
             validate(item)
             session.quarantine(item)
             done.append(item)
         except PermissionError:
-            errors.append((item, "Acceso denegado: está en uso o requiere permisos de administrador."))
+            errors.append((item, "Access denied: it is in use or requires administrator rights."))
         except Exception as e:
             errors.append((item, str(e)))
-    progress(f"Limpieza terminada: {len(done)} movidos a cuarentena, {len(errors)} con error.")
+    progress(f"Cleaning finished: {len(done)} moved to quarantine, {len(errors)} failed.")
     return done, errors
 
 
-# ---------------------------------------------------------------- copia de seguridad en ZIP
+# ---------------------------------------------------------------- ZIP backup
 
-BACKUP_DIR = os.path.join(rules.DOCUMENTS, f"{rules.APP_NAME} - Copias de seguridad")
-_KIND_NAME = {"folder": "Carpeta", "file": "Archivo", "regkey": "Clave del registro", "regvalue": "Valor del registro"}
+BACKUP_DIR = os.path.join(rules.DOCUMENTS, f"{rules.APP_NAME} Backups")
+_KIND_NAME = {"folder": "Folder", "file": "File", "regkey": "Registry key", "regvalue": "Registry value"}
 _REG_ROOT_NAME = {"HKCU": "HKEY_CURRENT_USER", "HKLM": "HKEY_LOCAL_MACHINE"}
 
 
 def backup_name(count):
-    """Nombre sugerido, p. ej. «Copia de seguridad LimpiaResiduos 21-10-2026 14.30 (57 elementos).zip»."""
-    stamp = time.strftime("%d-%m-%Y %H.%M")
-    return f"Copia de seguridad {rules.APP_NAME} {stamp} ({count} elemento{'s' if count != 1 else ''}).zip"
+    """Suggested name, e.g. "LeftoverSweeper Backup 2026-10-21 14.30 (57 items).zip"."""
+    stamp = time.strftime("%Y-%m-%d %H.%M")
+    return f"{rules.APP_NAME} Backup {stamp} ({count} item{'s' if count != 1 else ''}).zip"
 
 
 def _safe_name(text):
-    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .") or "elemento"
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .") or "item"
 
 
 def _reg_value_file(path, value):
-    """Contenido de un .reg que vuelve a crear un único valor del registro."""
+    """Contents of a .reg file that recreates a single registry value."""
     root, _, sub = path.partition("\\")
     with reg_open(path) as key:
         data, kind = winreg.QueryValueEx(key, value)
@@ -217,20 +217,20 @@ def _reg_value_file(path, value):
 
 
 def create_backup(items, zip_path, progress=lambda m: None):
-    """Guarda una copia de los elementos en un ZIP antes de tocarlos.
+    """Save a copy of the items in a ZIP before touching them.
 
-    Devuelve la lista de (ruta, motivo) de lo que no se pudo copiar."""
+    Returns the list of (path, reason) of whatever could not be copied."""
     os.makedirs(os.path.dirname(zip_path), exist_ok=True)
     skipped = []
     index = []
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf, \
             tempfile.TemporaryDirectory() as tmp:
         for n, item in enumerate(items, 1):
-            progress(f"Creando copia de seguridad ({n}/{len(items)}): {item.display_path}")
+            progress(f"Creating backup ({n}/{len(items)}): {item.display_path}")
             prefix = f"{n:03d}"
             try:
                 if item.kind == "folder":
-                    arc_root = f"Archivos/{prefix} {_safe_name(os.path.basename(item.path))}"
+                    arc_root = f"Files/{prefix} {_safe_name(os.path.basename(item.path))}"
                     zf.write(item.path, arc_root)
                     for root, dirs, files in os.walk(item.path):
                         dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
@@ -245,34 +245,34 @@ def create_backup(items, zip_path, progress=lambda m: None):
                                 skipped.append((src, e.strerror or str(e)))
                     where = arc_root
                 elif item.kind == "file":
-                    where = f"Archivos/{prefix} {_safe_name(os.path.basename(item.path))}"
+                    where = f"Files/{prefix} {_safe_name(os.path.basename(item.path))}"
                     zf.write(item.path, where)
                 elif item.kind == "regkey":
-                    where = f"Registro/{prefix} {_safe_name(item.path.rsplit(chr(92), 1)[-1])}.reg"
+                    where = f"Registry/{prefix} {_safe_name(item.path.rsplit(chr(92), 1)[-1])}.reg"
                     tmp_reg = os.path.join(tmp, f"{prefix}.reg")
                     _reg("export", item.path, tmp_reg, "/y")
                     zf.write(tmp_reg, where)
                 else:
-                    where = f"Registro/{prefix} {_safe_name(item.value or 'valor')} (valor).reg"
+                    where = f"Registry/{prefix} {_safe_name(item.value or 'value')} (value).reg"
                     zf.writestr(where, _reg_value_file(item.path, item.value).encode("utf-16"))
                 index.append(f"{prefix}  {_KIND_NAME[item.kind]}\r\n     Original: {item.display_path}\r\n"
-                             f"     En la copia: {where}\r\n     Motivo: {item.reason}\r\n")
+                             f"     In this backup: {where}\r\n     Reason: {item.reason}\r\n")
             except Exception as e:
                 skipped.append((item.display_path, str(e)))
-                index.append(f"{prefix}  {_KIND_NAME[item.kind]} — NO SE PUDO COPIAR ({e})\r\n"
+                index.append(f"{prefix}  {_KIND_NAME[item.kind]} — COULD NOT BE COPIED ({e})\r\n"
                              f"     Original: {item.display_path}\r\n")
-        zf.writestr("LÉEME - Cómo restaurar.txt", (
-            f"Copia de seguridad creada por {rules.APP_NAME} el {time.strftime('%d/%m/%Y a las %H:%M')}.\r\n\r\n"
-            "CÓMO RESTAURAR\r\n"
-            "- Lo más fácil: pestaña «Cuarentena» de la aplicación › Restaurar.\r\n"
-            "- A mano, archivos y carpetas: copia el contenido de «Archivos» a su ubicación original.\r\n"
-            "- A mano, registro: haz doble clic en el .reg de la carpeta «Registro».\r\n\r\n"
-            f"CONTENIDO ({len(items)} elementos)\r\n\r\n" + "\r\n".join(index)).encode("utf-8-sig"))
-    progress(f"Copia de seguridad creada: {os.path.basename(zip_path)}")
+        zf.writestr("README - How to restore.txt", (
+            f"Backup created by {rules.APP_NAME} on {time.strftime('%Y-%m-%d at %H:%M')}.\r\n\r\n"
+            "HOW TO RESTORE\r\n"
+            "- Easiest: the app's \"Quarantine\" tab > Restore.\r\n"
+            "- By hand, files and folders: copy the contents of \"Files\" back to their original location.\r\n"
+            "- By hand, registry: double-click the .reg file in the \"Registry\" folder.\r\n\r\n"
+            f"CONTENTS ({len(items)} items)\r\n\r\n" + "\r\n".join(index)).encode("utf-8-sig"))
+    progress(f"Backup created: {os.path.basename(zip_path)}")
     return skipped
 
 
-# ---------------------------------------------------------------- gestión de la cuarentena
+# ---------------------------------------------------------------- quarantine management
 
 def _write_manifest(session_dir, records):
     tmp = os.path.join(session_dir, MANIFEST + ".tmp")
@@ -290,7 +290,7 @@ def _read_manifest(session_dir):
 
 
 def list_quarantine():
-    """Lista de (carpeta_sesión, registro) de los elementos aún en cuarentena."""
+    """List of (session_folder, record) for the items still in quarantine."""
     out = []
     try:
         sessions = sorted(os.listdir(rules.QUARANTINE_DIR), reverse=True)
@@ -308,7 +308,7 @@ def _restore_one(rec):
     kind = rec["kind"]
     if kind in ("folder", "file"):
         if os.path.lexists(rec["path"]):
-            raise FileExistsError("Ya existe algo en la ubicación original.")
+            raise FileExistsError("Something already exists at the original location.")
         os.makedirs(os.path.dirname(rec["path"]), exist_ok=True)
         shutil.move(rec["backup"], rec["path"])
     elif kind == "regkey":
@@ -346,7 +346,7 @@ def _apply(entries, action, new_status, progress):
                 rec["status"] = new_status
                 done.append(rec)
             except PermissionError:
-                errors.append((rec, "Acceso denegado: requiere permisos de administrador o está en uso."))
+                errors.append((rec, "Access denied: requires administrator rights or it is in use."))
             except Exception as e:
                 errors.append((rec, str(e)))
             _write_manifest(sdir, records)

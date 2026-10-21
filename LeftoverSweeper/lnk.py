@@ -1,10 +1,10 @@
-"""Lector mínimo de accesos directos .lnk (formato MS-SHLLINK) para obtener su destino."""
+"""Minimal .lnk shortcut reader (MS-SHLLINK format) to get the target path."""
 import os
 import struct
 
 _HAS_ID_LIST = 0x01
 _HAS_LINK_INFO = 0x02
-_HAS_DARWIN_ID = 0x1000  # acceso directo «anunciado» de Windows Installer
+_HAS_DARWIN_ID = 0x1000  # Windows Installer "advertised" shortcut
 _VOLUME_ID_AND_LOCAL_BASE_PATH = 0x01
 
 
@@ -21,8 +21,8 @@ def _read_utf16(data, pos):
 
 
 def target(path):
-    """Ruta local de destino del acceso directo, o None si no se puede saber
-    (destinos de red, accesos de Windows Installer, de la Tienda, etc.)."""
+    """Local target path of the shortcut, or None when it cannot be known
+    (network targets, Windows Installer or Store shortcuts, etc.)."""
     try:
         with open(path, "rb") as f:
             data = f.read(256 * 1024)

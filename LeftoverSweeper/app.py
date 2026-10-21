@@ -1,4 +1,4 @@
-"""LimpiaResiduos: interfaz gráfica para encontrar y eliminar restos de programas desinstalados."""
+"""LeftoverSweeper: GUI to find and remove the leftovers of uninstalled programs."""
 import ctypes
 import json
 import os
@@ -17,11 +17,11 @@ import rules  # noqa: E402
 import scanner  # noqa: E402
 from winutil import is_admin  # noqa: E402
 
-CONF_LABEL = {"alta": "Alta", "media": "Media", "baja": "Baja"}
-CONF_ORDER = {"alta": 0, "media": 1, "baja": 2}
-KIND_LABEL = {"folder": "Carpeta", "file": "Archivo", "regkey": "Clave", "regvalue": "Valor"}
+CONF_LABEL = {"high": "High", "medium": "Medium", "low": "Low"}
+CONF_ORDER = {"high": 0, "medium": 1, "low": 2}
+KIND_LABEL = {"folder": "Folder", "file": "File", "regkey": "Key", "regvalue": "Value"}
 CHECKED, UNCHECKED = "☑", "☐"
-IGNORE_FILE = os.path.join(rules.DATA_DIR, "ignorados.json")
+IGNORE_FILE = os.path.join(rules.DATA_DIR, "ignored.json")
 
 
 def human_size(n, truncated=False):
@@ -32,6 +32,10 @@ def human_size(n, truncated=False):
             text = f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
             return ("≥ " if truncated else "") + text
         n /= 1024
+
+
+def plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 class IgnoreList:
@@ -53,17 +57,17 @@ class IgnoreList:
 
 
 class ResultsView(ttk.Frame):
-    """Tabla de resultados con casillas, filtro por confianza y menú contextual."""
+    """Results table with checkboxes, a confidence filter and a context menu."""
 
-    COLUMNS = (("sel", "", 34), ("conf", "Confianza", 80), ("kind", "Tipo", 70), ("cat", "Categoría", 230),
-               ("path", "Ubicación", 520), ("size", "Tamaño", 80))
+    COLUMNS = (("sel", "", 34), ("conf", "Confidence", 85), ("kind", "Type", 70), ("cat", "Category", 230),
+               ("path", "Location", 520), ("size", "Size", 80))
 
     def __init__(self, master, app):
         super().__init__(master)
         self.app = app
         self.items = {}
         self.checked = set()
-        self.filter = "todos"
+        self.filter = "all"
 
         self.tree = ttk.Treeview(self, columns=[c[0] for c in self.COLUMNS], show="headings", selectmode="extended")
         for col, title, width in self.COLUMNS:
@@ -71,9 +75,9 @@ class ResultsView(ttk.Frame):
             self.tree.column(col, width=width, stretch=col in ("path", "cat"),
                              anchor="center" if col in ("sel", "conf", "kind") else "w")
         self.tree.column("size", anchor="e")
-        self.tree.tag_configure("alta", foreground="#1a7f37")
-        self.tree.tag_configure("media", foreground="#9a6700")
-        self.tree.tag_configure("baja", foreground="#6e7781")
+        self.tree.tag_configure("high", foreground="#1a7f37")
+        self.tree.tag_configure("medium", foreground="#9a6700")
+        self.tree.tag_configure("low", foreground="#6e7781")
         ys = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
         xs = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -94,15 +98,15 @@ class ResultsView(ttk.Frame):
         self.tree.bind("<Button-3>", self._on_right_click)
 
         self.menu = tk.Menu(self, tearoff=False)
-        self.menu.add_command(label="Marcar / desmarcar", command=self._toggle_selection)
-        self.menu.add_command(label="Abrir ubicación", command=self._open_location)
-        self.menu.add_command(label="Copiar ruta", command=self._copy_path)
+        self.menu.add_command(label="Tick / untick", command=self._toggle_selection)
+        self.menu.add_command(label="Open location", command=self._open_location)
+        self.menu.add_command(label="Copy path", command=self._copy_path)
         self.menu.add_separator()
-        self.menu.add_command(label="No es un residuo (ignorar siempre)", command=self._ignore)
+        self.menu.add_command(label="Not a leftover (always ignore)", command=self._ignore)
 
-    # -------------------------------------------------- datos
+    # -------------------------------------------------- data
 
-    def set_items(self, items, preselect=("alta",)):
+    def set_items(self, items, preselect=("high",)):
         self.items = {}
         for i, it in enumerate(sorted(items, key=lambda x: (CONF_ORDER[x.confidence], x.category, x.path.lower()))):
             self.items[str(i)] = it
@@ -112,7 +116,7 @@ class ResultsView(ttk.Frame):
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
         for iid, it in self.items.items():
-            if self.filter != "todos" and it.confidence != self.filter:
+            if self.filter != "all" and it.confidence != self.filter:
                 continue
             self.tree.insert("", "end", iid=iid, tags=(it.confidence,), values=(
                 CHECKED if iid in self.checked else UNCHECKED, CONF_LABEL[it.confidence], KIND_LABEL[it.kind],
@@ -145,7 +149,7 @@ class ResultsView(ttk.Frame):
         checked = self.checked_items()
         return len(self.items), len(checked), sum(i.size for i in checked)
 
-    # -------------------------------------------------- eventos
+    # -------------------------------------------------- events
 
     def _set_checked(self, iid, value):
         (self.checked.add if value else self.checked.discard)(iid)
@@ -171,7 +175,7 @@ class ResultsView(ttk.Frame):
         sel = self.tree.selection()
         if sel:
             it = self.items[sel[0]]
-            admin = " · Requiere administrador." if rules.requires_admin(it) else ""
+            admin = " · Requires administrator." if rules.requires_admin(it) else ""
             self.detail.configure(text=f"{it.display_path}\n{it.reason}{admin}")
 
     def _on_right_click(self, event):
@@ -194,8 +198,8 @@ class ResultsView(ttk.Frame):
                 subprocess.Popen(["explorer", "/select,", it.path])
         else:
             self._copy_path()
-            messagebox.showinfo(rules.APP_NAME, "Ruta del registro copiada al portapapeles.\n"
-                                "Pégala en la barra de direcciones del Editor del Registro (regedit).", parent=self)
+            messagebox.showinfo(rules.APP_NAME, "Registry path copied to the clipboard.\n"
+                                "Paste it into the address bar of the Registry Editor (regedit).", parent=self)
 
     def _copy_path(self):
         it = self._focused()
@@ -213,11 +217,11 @@ class ResultsView(ttk.Frame):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"{rules.APP_NAME} {rules.APP_VERSION} — Limpiador de restos de programas")
+        self.title(f"{rules.APP_NAME} {rules.APP_VERSION} — Uninstall leftover cleaner")
         self.geometry("1180x700")
         self.minsize(820, 480)
         try:
-            self.iconbitmap(resource("icono.ico"))
+            self.iconbitmap(resource("icon.ico"))
         except tk.TclError:
             pass
         self.ignored = IgnoreList()
@@ -244,65 +248,65 @@ class App(tk.Tk):
         self.after(100, self._poll)
         self.refresh_quarantine()
 
-    # -------------------------------------------------- construcción
+    # -------------------------------------------------- layout
 
     def _build_header(self):
         top = ttk.Frame(self, padding=(12, 10, 12, 0))
         top.pack(fill="x")
         ttk.Label(top, text=rules.APP_NAME, style="Title.TLabel").pack(side="left")
-        ttk.Label(top, text="  Encuentra y elimina lo que dejan los programas al desinstalarse. "
-                            "Todo pasa por la cuarentena y se puede restaurar.").pack(side="left")
+        ttk.Label(top, text="  Finds and removes what programs leave behind when uninstalled. "
+                            "Everything goes through the quarantine and can be restored.").pack(side="left")
         if is_admin():
-            ttk.Label(top, text="✔ Administrador", foreground="#1a7f37").pack(side="right")
+            ttk.Label(top, text="✔ Administrator", foreground="#1a7f37").pack(side="right")
         else:
-            ttk.Button(top, text="Reiniciar como administrador", command=self.relaunch_as_admin).pack(side="right")
-            ttk.Label(top, text="Sin permisos de administrador  ", style="Warn.TLabel").pack(side="right")
+            ttk.Button(top, text="Restart as administrator", command=self.relaunch_as_admin).pack(side="right")
+            ttk.Label(top, text="No administrator rights  ", style="Warn.TLabel").pack(side="right")
 
     def _marking_bar(self, parent, view):
         bar = ttk.Frame(parent)
-        ttk.Label(bar, text="Marcar:").pack(side="left")
-        ttk.Button(bar, text="Confianza alta", command=lambda: view.mark(lambda i: i.confidence == "alta")
+        ttk.Label(bar, text="Tick:").pack(side="left")
+        ttk.Button(bar, text="High confidence", command=lambda: view.mark(lambda i: i.confidence == "high")
                    ).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Todo lo visible", command=lambda: view.mark(lambda i: True)).pack(side="left", padx=4)
-        ttk.Button(bar, text="Nada", command=lambda: view.mark(lambda i: False)).pack(side="left")
-        ttk.Label(bar, text="   Mostrar:").pack(side="left")
-        combo = ttk.Combobox(bar, state="readonly", width=12, values=["Todos", "Alta", "Media", "Baja"])
+        ttk.Button(bar, text="All visible", command=lambda: view.mark(lambda i: True)).pack(side="left", padx=4)
+        ttk.Button(bar, text="None", command=lambda: view.mark(lambda i: False)).pack(side="left")
+        ttk.Label(bar, text="   Show:").pack(side="left")
+        combo = ttk.Combobox(bar, state="readonly", width=12, values=["All", "High", "Medium", "Low"])
         combo.current(0)
         combo.bind("<<ComboboxSelected>>", lambda e: view.set_filter(combo.get().lower()))
         combo.pack(side="left", padx=(6, 0))
-        btn = ttk.Button(bar, text="Mover a cuarentena", command=lambda: self.clean(view))
+        btn = ttk.Button(bar, text="Move to quarantine", command=lambda: self.clean(view))
         btn.pack(side="right")
         self.action_buttons.append(btn)
-        btn = ttk.Button(bar, text="Marcar todo y mover a cuarentena…", command=lambda: self.clean_all(view))
+        btn = ttk.Button(bar, text="Tick all and move to quarantine…", command=lambda: self.clean_all(view))
         btn.pack(side="right", padx=6)
         self.action_buttons.append(btn)
         return bar
 
     def _build_scan_tab(self):
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="  Escaneo completo  ")
+        self.notebook.add(tab, text="  Full scan  ")
         top = ttk.Frame(tab)
         top.pack(fill="x")
-        btn = ttk.Button(top, text="Escanear el equipo", command=self.start_scan)
+        btn = ttk.Button(top, text="Scan this PC", command=self.start_scan)
         btn.pack(side="left")
         self.action_buttons.append(btn)
-        ttk.Label(top, text="  Busca carpetas, claves, accesos directos y entradas de inicio sin programa "
-                            "asociado. Solo se marcan por defecto los de confianza alta.").pack(side="left")
+        ttk.Label(top, text="  Looks for folders, registry keys, shortcuts and startup entries with no owning "
+                            "program. Only high-confidence items are ticked by default.").pack(side="left")
         self.scan_view = ResultsView(tab, self)
         self.scan_view.pack(fill="both", expand=True, pady=8)
         self._marking_bar(tab, self.scan_view).pack(fill="x")
 
     def _build_search_tab(self):
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="  Buscar por nombre  ")
+        self.notebook.add(tab, text="  Search by name  ")
         top = ttk.Frame(tab)
         top.pack(fill="x")
-        ttk.Label(top, text="Nombre del programa desinstalado:").pack(side="left")
+        ttk.Label(top, text="Name of the uninstalled program:").pack(side="left")
         self.search_var = tk.StringVar()
         entry = ttk.Entry(top, textvariable=self.search_var, width=36)
         entry.pack(side="left", padx=6)
         entry.bind("<Return>", lambda e: self.start_search())
-        btn = ttk.Button(top, text="Buscar restos", command=self.start_search)
+        btn = ttk.Button(top, text="Find leftovers", command=self.start_search)
         btn.pack(side="left")
         self.action_buttons.append(btn)
         self.search_warning = ttk.Label(tab, text="", style="Warn.TLabel", wraplength=1000)
@@ -313,13 +317,13 @@ class App(tk.Tk):
 
     def _build_quarantine_tab(self):
         tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="  Cuarentena  ")
-        ttk.Label(tab, text="Elementos retirados. Puedes devolverlos a su sitio o eliminarlos para siempre "
-                            "cuando compruebes que todo funciona bien.").pack(fill="x")
+        self.notebook.add(tab, text="  Quarantine  ")
+        ttk.Label(tab, text="Removed items. You can put them back or delete them for good once you have "
+                            "checked that everything works.").pack(fill="x")
         frame = ttk.Frame(tab)
         frame.pack(fill="both", expand=True, pady=8)
-        cols = (("date", "Fecha", 140), ("kind", "Tipo", 70), ("path", "Ubicación original", 680),
-                ("size", "Tamaño", 80))
+        cols = (("date", "Date", 140), ("kind", "Type", 70), ("path", "Original location", 680),
+                ("size", "Size", 80))
         self.qtree = ttk.Treeview(frame, columns=[c[0] for c in cols], show="headings", selectmode="extended")
         for col, title, width in cols:
             self.qtree.heading(col, text=title)
@@ -330,9 +334,9 @@ class App(tk.Tk):
         ys.pack(side="right", fill="y")
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Actualizar", command=self.refresh_quarantine).pack(side="left")
-        ttk.Button(bar, text="Abrir carpeta de cuarentena", command=self.open_quarantine_dir).pack(side="left", padx=6)
-        for text, cmd in (("Eliminar definitivamente", self.purge_selected), ("Restaurar", self.restore_selected)):
+        ttk.Button(bar, text="Refresh", command=self.refresh_quarantine).pack(side="left")
+        ttk.Button(bar, text="Open quarantine folder", command=self.open_quarantine_dir).pack(side="left", padx=6)
+        for text, cmd in (("Delete permanently", self.purge_selected), ("Restore", self.restore_selected)):
             btn = ttk.Button(bar, text=text, command=cmd)
             btn.pack(side="right", padx=(6, 0))
             self.action_buttons.append(btn)
@@ -341,13 +345,13 @@ class App(tk.Tk):
     def _build_status(self):
         bar = ttk.Frame(self, padding=(12, 6))
         bar.pack(fill="x")
-        self.status = ttk.Label(bar, text="Listo.")
+        self.status = ttk.Label(bar, text="Ready.")
         self.status.pack(side="left", fill="x", expand=True)
         self.summary = ttk.Label(bar, text="")
         self.summary.pack(side="right")
         self.progress = ttk.Progressbar(bar, mode="indeterminate", length=160)
 
-    # -------------------------------------------------- tareas en segundo plano
+    # -------------------------------------------------- background tasks
 
     def run_task(self, work, on_done):
         if self.busy:
@@ -362,7 +366,7 @@ class App(tk.Tk):
             try:
                 result = work(lambda msg: self.events.put(("msg", msg)))
                 self.events.put(("done", on_done, result))
-            except Exception as e:  # se muestra al usuario
+            except Exception as e:  # shown to the user
                 self.events.put(("error", e))
 
         threading.Thread(target=runner, daemon=True).start()
@@ -391,13 +395,13 @@ class App(tk.Tk):
     def _without_ignored(self, items):
         return [i for i in items if i.key not in self.ignored.keys]
 
-    # -------------------------------------------------- acciones
+    # -------------------------------------------------- actions
 
     def start_scan(self):
         def done(items):
             items = self._without_ignored(items)
             self.scan_view.set_items(items)
-            self.status.configure(text=f"Escaneo terminado: {len(items)} posibles residuos.")
+            self.status.configure(text=f"Scan finished: {plural(len(items), 'possible leftover')}.")
         self.run_task(scanner.scan, done)
 
     def start_search(self):
@@ -408,42 +412,43 @@ class App(tk.Tk):
         def done(result):
             items, installed = result
             items = self._without_ignored(items)
-            self.search_view.set_items(items, preselect=("alta", "media"))
+            self.search_view.set_items(items, preselect=("high", "medium"))
             self.search_warning.configure(text=(
-                f"⚠ Parece que sigue instalado: {', '.join(installed[:5])}. Desinstálalo primero desde "
-                "Configuración › Aplicaciones; los resultados se marcan con confianza baja." if installed else ""))
-            self.status.configure(text=f"Búsqueda terminada: {len(items)} elementos relacionados con «{term}».")
+                f"⚠ This still seems to be installed: {', '.join(installed[:5])}. Uninstall it first from "
+                "Settings › Apps; matching results are marked as low confidence." if installed else ""))
+            self.status.configure(text=f"Search finished: {plural(len(items), 'item')} related to \"{term}\".")
         self.run_task(lambda p: scanner.search(term, p), done)
 
     def _clean_warnings(self, items):
         msg = ""
-        low = [i for i in items if i.confidence == "baja"]
+        low = [i for i in items if i.confidence == "low"]
         if low:
-            msg += f"\n\n{len(low)} son de confianza BAJA: revisa que no pertenezcan a algo que sigues usando."
+            msg += (f"\n\n{len(low)} {'is' if len(low) == 1 else 'are'} LOW confidence: make sure they don't "
+                    "belong to something you still use.")
         need_admin = [i for i in items if rules.requires_admin(i)]
         if need_admin and not is_admin():
-            msg += (f"\n\n{len(need_admin)} requieren permisos de administrador y fallarán. "
-                    "Usa «Reiniciar como administrador» para incluirlos.")
+            msg += (f"\n\n{len(need_admin)} require administrator rights and will fail. "
+                    "Use \"Restart as administrator\" to include them.")
         return msg
 
     @staticmethod
     def _size_text(items):
-        return human_size(sum(i.size for i in items)) if any(i.size for i in items) else "sin archivos"
+        return human_size(sum(i.size for i in items)) if any(i.size for i in items) else "no files"
 
     def clean(self, view):
         items = view.checked_items()
         if not items:
-            messagebox.showinfo(rules.APP_NAME, "No hay elementos marcados.", parent=self)
+            messagebox.showinfo(rules.APP_NAME, "Nothing is ticked.", parent=self)
             return
-        msg = (f"Se moverán {len(items)} elemento(s) a la cuarentena ({self._size_text(items)}).\n\n"
-               "Podrás restaurarlos desde la pestaña «Cuarentena»." + self._clean_warnings(items))
-        if messagebox.askyesno(rules.APP_NAME, msg + "\n\n¿Continuar?", parent=self):
+        msg = (f"{plural(len(items), 'item')} will be moved to the quarantine ({self._size_text(items)}).\n\n"
+               "You can restore them from the \"Quarantine\" tab." + self._clean_warnings(items))
+        if messagebox.askyesno(rules.APP_NAME, msg + "\n\nContinue?", parent=self):
             self._run_clean(view, items)
 
     def clean_all(self, view):
         visible = view.visible_ids()
         if not visible:
-            messagebox.showinfo(rules.APP_NAME, "No hay resultados. Primero escanea el equipo o busca un programa.",
+            messagebox.showinfo(rules.APP_NAME, "There are no results. Scan the PC or search for a program first.",
                                 parent=self)
             return
         previous = set(view.checked)
@@ -454,16 +459,16 @@ class App(tk.Tk):
         def cancel():
             view.checked = previous
             view.refresh()
-            self.status.configure(text="Cancelado: no se ha movido nada.")
+            self.status.configure(text="Cancelled: nothing was moved.")
 
         answer = messagebox.askyesnocancel(
             rules.APP_NAME,
-            f"Se han marcado los {len(items)} elementos de la lista ({self._size_text(items)}) para moverlos "
-            f"a la cuarentena.{self._clean_warnings(items)}\n\n"
-            "¿Quieres crear antes una copia de seguridad en un archivo ZIP?\n\n"
-            "•  Sí: eliges dónde guardarla y después se mueven.\n"
-            "•  No: se mueven sin copia extra (desde la cuarentena se pueden restaurar igualmente).\n"
-            "•  Cancelar: no se hace nada.",
+            f"All {plural(len(items), 'item')} in the list ({self._size_text(items)}) have been ticked to be "
+            f"moved to the quarantine.{self._clean_warnings(items)}\n\n"
+            "Do you want to create a ZIP backup first?\n\n"
+            "•  Yes: choose where to save it, then the items are moved.\n"
+            "•  No: move them without an extra copy (they can still be restored from the quarantine).\n"
+            "•  Cancel: do nothing.",
             icon="question", parent=self)
         if answer is None:
             cancel()
@@ -480,12 +485,12 @@ class App(tk.Tk):
         os.makedirs(cleaner.BACKUP_DIR, exist_ok=True)
         while True:
             path = filedialog.asksaveasfilename(
-                parent=self, title="Guardar copia de seguridad", initialdir=cleaner.BACKUP_DIR,
+                parent=self, title="Save backup", initialdir=cleaner.BACKUP_DIR,
                 initialfile=cleaner.backup_name(len(items)), defaultextension=".zip",
-                filetypes=[("Archivo ZIP", "*.zip")])
+                filetypes=[("ZIP archive", "*.zip")])
             if not path:
                 try:
-                    os.rmdir(cleaner.BACKUP_DIR)  # solo si quedó vacía
+                    os.rmdir(cleaner.BACKUP_DIR)  # only if it was left empty
                 except OSError:
                     pass
                 return None
@@ -494,8 +499,8 @@ class App(tk.Tk):
                       and os.path.normcase(path).startswith(os.path.normcase(i.path) + os.sep)]
             if not inside:
                 return path
-            messagebox.showwarning(rules.APP_NAME, "No guardes la copia dentro de una carpeta que se va a mover:\n"
-                                   f"{inside[0].path}\n\nElige otra ubicación.", parent=self)
+            messagebox.showwarning(rules.APP_NAME, "Don't save the backup inside a folder that is about to be moved:\n"
+                                   f"{inside[0].path}\n\nPick another location.", parent=self)
 
     def _run_clean(self, view, items, backup=None):
         def work(progress):
@@ -514,20 +519,20 @@ class App(tk.Tk):
             ok, errors, skipped = result
             view.remove(ok)
             self.refresh_quarantine()
-            self.status.configure(text=f"{len(ok)} elemento(s) movidos a la cuarentena.")
-            summary = f"{len(ok)} elemento(s) movidos a la cuarentena."
+            summary = f"{plural(len(ok), 'item')} moved to the quarantine."
+            self.status.configure(text=summary)
             if backup:
-                summary += f"\n\nCopia de seguridad guardada en:\n{backup}"
+                summary += f"\n\nBackup saved to:\n{backup}"
                 if skipped:
-                    summary += f"\n({len(skipped)} archivo(s) en uso no se pudieron copiar.)"
+                    summary += f"\n({plural(len(skipped), 'file')} in use could not be copied.)"
             if errors:
-                self.show_errors(summary + f"\n\n{len(errors)} no se pudieron mover:",
+                self.show_errors(summary + f"\n\n{len(errors)} could not be moved:",
                                  [(i.display_path, e) for i, e in errors])
             elif backup:
-                if messagebox.askyesno(rules.APP_NAME, summary + "\n\n¿Abrir la carpeta de la copia?", parent=self):
+                if messagebox.askyesno(rules.APP_NAME, summary + "\n\nOpen the backup folder?", parent=self):
                     subprocess.Popen(["explorer", "/select,", backup])
             else:
-                messagebox.showinfo(rules.APP_NAME, "Listo: " + summary, parent=self)
+                messagebox.showinfo(rules.APP_NAME, "Done: " + summary, parent=self)
         self.run_task(work, done)
 
     def refresh_quarantine(self):
@@ -539,7 +544,7 @@ class App(tk.Tk):
             path = f"{rec['path']}  →  {rec['value']}" if rec["kind"] == "regvalue" else rec["path"]
             self.qtree.insert("", "end", iid=iid, values=(rec["date"], KIND_LABEL.get(rec["kind"], rec["kind"]),
                                                           path, human_size(rec.get("size", 0))))
-        self.notebook.tab(2, text=f"  Cuarentena ({len(self.qentries)})  ")
+        self.notebook.tab(2, text=f"  Quarantine ({len(self.qentries)})  ")
 
     def _selected_quarantine(self):
         return [self.qentries[i] for i in self.qtree.selection() if i in self.qentries]
@@ -547,35 +552,36 @@ class App(tk.Tk):
     def restore_selected(self):
         entries = self._selected_quarantine()
         if not entries:
-            messagebox.showinfo(rules.APP_NAME, "Selecciona los elementos que quieres restaurar.", parent=self)
+            messagebox.showinfo(rules.APP_NAME, "Select the items you want to restore.", parent=self)
             return
-        if not messagebox.askyesno(rules.APP_NAME, f"¿Devolver {len(entries)} elemento(s) a su ubicación original?",
-                                   parent=self):
+        if not messagebox.askyesno(rules.APP_NAME, f"Put {plural(len(entries), 'item')} back in their original "
+                                   "location?", parent=self):
             return
-        self.run_task(lambda p: cleaner.restore(entries, p), lambda r: self._after_quarantine_op("restaurados", r))
+        self.run_task(lambda p: cleaner.restore(entries, p), lambda r: self._after_quarantine_op("restored", r))
 
     def purge_selected(self):
         entries = self._selected_quarantine()
         if not entries:
-            messagebox.showinfo(rules.APP_NAME, "Selecciona los elementos que quieres eliminar.", parent=self)
+            messagebox.showinfo(rules.APP_NAME, "Select the items you want to delete.", parent=self)
             return
-        if not messagebox.askyesno(rules.APP_NAME, f"Se eliminarán DEFINITIVAMENTE {len(entries)} elemento(s) "
-                                   "y sus copias de seguridad. Esto no se puede deshacer.\n\n¿Continuar?",
+        if not messagebox.askyesno(rules.APP_NAME, f"{plural(len(entries), 'item')} and their backups will be "
+                                   "deleted PERMANENTLY. This cannot be undone.\n\nContinue?",
                                    icon="warning", parent=self):
             return
-        self.run_task(lambda p: cleaner.purge(entries, p), lambda r: self._after_quarantine_op("eliminados", r))
+        self.run_task(lambda p: cleaner.purge(entries, p), lambda r: self._after_quarantine_op("deleted", r))
 
     def _after_quarantine_op(self, verb, result):
         ok, errors = result
         self.refresh_quarantine()
-        self.status.configure(text=f"{len(ok)} elemento(s) {verb}.")
+        self.status.configure(text=f"{plural(len(ok), 'item')} {verb}.")
         if errors:
-            self.show_errors(f"{len(ok)} {verb}. {len(errors)} con error:", [(r["path"], e) for r, e in errors])
+            self.show_errors(f"{plural(len(ok), 'item')} {verb}. {len(errors)} failed:",
+                             [(r["path"], e) for r, e in errors])
 
     def show_errors(self, title, rows):
         text = "\n".join(f"• {p}\n    {e}" for p, e in rows[:15])
         if len(rows) > 15:
-            text += f"\n… y {len(rows) - 15} más."
+            text += f"\n… and {len(rows) - 15} more."
         messagebox.showwarning(rules.APP_NAME, f"{title}\n\n{text}", parent=self)
 
     def open_quarantine_dir(self):
@@ -591,11 +597,11 @@ class App(tk.Tk):
             self.summary.configure(text="")
             return
         total, checked, size = view.stats()
-        self.summary.configure(text=f"{total} encontrados · {checked} marcados · {human_size(size)}")
+        self.summary.configure(text=f"{total} found · {checked} ticked · {human_size(size)}")
 
     def relaunch_as_admin(self):
         exe = sys.executable
-        if getattr(sys, "frozen", False):  # versión compilada (.exe)
+        if getattr(sys, "frozen", False):  # compiled build (.exe)
             params, cwd = "", os.path.dirname(exe)
         else:
             pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
@@ -609,7 +615,7 @@ class App(tk.Tk):
 
 
 def resource(name):
-    """Ruta a un recurso, tanto ejecutando el .py como desde el .exe compilado."""
+    """Path to a bundled resource, both when running the .py and the compiled .exe."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
 

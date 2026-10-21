@@ -1,4 +1,4 @@
-"""Motor de escaneo: detecta restos de programas desinstalados. Solo lee, nunca modifica."""
+"""Scan engine: finds leftovers of uninstalled programs. Read-only, never modifies anything."""
 import bisect
 import os
 import re
@@ -15,7 +15,7 @@ _GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 RECENT_DAYS = 30
 
-# Carpetas en las que la búsqueda por nombre no entra (apps de la Tienda, temporales…).
+# Folders the search by name does not descend into (Store apps, temp files…).
 _NO_DESCEND = {norm(n) for n in ["Packages", "WindowsApps", "Temp", "Package Cache", "WinSxS", "Installer"]}
 
 _STOPWORDS = {norm(w) for w in [
@@ -35,10 +35,10 @@ _CORP_SUFFIX = re.compile(r"\b(inc|corp|corporation|llc|ltd|limited|gmbh|co|sa|s
 class Item:
     kind: str          # folder | file | regkey | regvalue
     path: str
-    confidence: str    # alta | media | baja
+    confidence: str    # high | medium | low
     category: str
     reason: str
-    value: str = None  # nombre del valor (solo regvalue)
+    value: str = None  # value name (regvalue only)
     size: int = 0
     size_truncated: bool = False
 
@@ -51,7 +51,7 @@ class Item:
         return f"{self.path}  →  {self.value}" if self.kind == "regvalue" else self.path
 
 
-# ---------------------------------------------------------------- inventario de lo instalado
+# ---------------------------------------------------------------- inventory of what is installed
 
 @dataclass
 class UninstallEntry:
@@ -87,7 +87,7 @@ def read_uninstall_entries():
 
 
 class Known:
-    """Lo que está instalado o en uso: nombres de productos, fabricantes y rutas."""
+    """What is installed or in use: product names, publishers and paths."""
 
     def __init__(self):
         self.products = set()
@@ -122,7 +122,7 @@ class Known:
         self._publisher_blob = "|".join(sorted(self.publishers))
 
     def path_inside(self, path):
-        """True si alguna ruta en uso está dentro de `path` (o es ella)."""
+        """True if any in-use path is inside `path` (or is `path` itself)."""
         p = npath(path)
         i = bisect.bisect_left(self.paths, p)
         while i < len(self.paths) and self.paths[i].startswith(p):
@@ -133,10 +133,10 @@ class Known:
         return False
 
     def match_name(self, name):
-        """'product', 'publisher' o None."""
+        """'product', 'publisher' or None."""
         f = norm(name)
         if len(f) < 3:
-            return "product"  # nombres demasiado cortos: no se arriesga
+            return "product"  # names too short to judge: don't take the risk
         if f in self._product_blob or any(len(k) >= 4 and k in f for k in self.products):
             return "product"
         if any(w in f for w in self.words):
@@ -146,7 +146,7 @@ class Known:
         return None
 
     def folder_status(self, name, path, child=False):
-        """'owned' (en uso), 'container' (carpeta de fabricante) u 'orphan'."""
+        """'owned' (in use), 'container' (publisher folder) or 'orphan'."""
         if self.match_name(name) == "product" or self.path_inside(path):
             return "owned"
         if not child and self.match_name(name) == "publisher":
@@ -169,7 +169,7 @@ def _shortcuts(dirs, recursive=True):
 
 
 def build_known(progress=lambda m: None):
-    progress("Leyendo programas instalados…")
+    progress("Reading installed programs…")
     known = Known()
     entries = read_uninstall_entries()
     for e in entries:
@@ -187,7 +187,7 @@ def build_known(progress=lambda m: None):
             if exe and os.path.exists(exe):
                 known.add_path(exe, is_file=True)
 
-    progress("Leyendo aplicaciones de la Microsoft Store…")
+    progress("Reading Microsoft Store apps…")
     for pkg in reg_subkeys(rules.APPX_PACKAGES_KEY):
         name = pkg.split("_")[0]
         known.add_product(name)
@@ -199,7 +199,7 @@ def build_known(progress=lambda m: None):
             known.add_product(display[0])
             known.installed_names.append(display[0])
 
-    progress("Revisando servicios y procesos en ejecución…")
+    progress("Checking services and running processes…")
     services = "HKLM\\SYSTEM\\CurrentControlSet\\Services"
     for svc in reg_subkeys(services):
         image = reg_values(f"{services}\\{svc}").get("ImagePath")
@@ -213,7 +213,7 @@ def build_known(progress=lambda m: None):
         if d and os.path.isdir(d):
             known.add_path(d)
 
-    progress("Revisando programas de inicio y accesos directos…")
+    progress("Checking startup programs and shortcuts…")
     for key in rules.RUN_KEYS:
         for data, _kind in reg_values(key).values():
             exe = exe_from_command(str(data))
@@ -234,30 +234,30 @@ def build_known(progress=lambda m: None):
     return known, entries
 
 
-# ---------------------------------------------------------------- creación de elementos
+# ---------------------------------------------------------------- building items
 
 def _date(ts):
-    return time.strftime("%d/%m/%Y", time.localtime(ts)) if ts else "?"
+    return time.strftime("%Y-%m-%d", time.localtime(ts)) if ts else "?"
 
 
 def _folder_item(path, base_conf, category, reason):
     size, files, newest, truncated, errors = folder_stats(path)
     conf = base_conf
     if files == 0 and not errors:
-        conf, reason = "alta", "Carpeta vacía. " + reason
+        conf, reason = "high", "Empty folder. " + reason
     else:
-        reason += f" Último cambio: {_date(newest)}."
+        reason += f" Last modified: {_date(newest)}."
         if errors:
-            reason += " Algunos archivos no se pudieron leer."
+            reason += " Some files could not be read."
         if newest and time.time() - newest < RECENT_DAYS * 86400:
-            conf = "baja"
-            reason += " Modificada recientemente: podría estar en uso."
+            conf = "low"
+            reason += " Recently modified: it may still be in use."
     return Item("folder", path, conf, category, reason, size=size, size_truncated=truncated)
 
 
-def _reg_item(path, category, reason, conf="baja"):
+def _reg_item(path, category, reason, conf="low"):
     if reg_is_empty(path):
-        conf, reason = "alta", "Clave vacía. " + reason
+        conf, reason = "high", "Empty key. " + reason
     return Item("regkey", path, conf, category, reason)
 
 
@@ -265,7 +265,7 @@ _PLAIN_PATH_RE = re.compile(r'^[a-zA-Z]:\\[^"<>|*?\r\n]*$')
 
 
 def _reg_paths(path, max_keys=60):
-    """Rutas de archivo/carpeta que aparecen en los valores de una clave y sus subclaves."""
+    """File/folder paths found in the values of a key and its subkeys."""
     out, stack, visited = [], [path], 0
     while stack and visited < max_keys:
         key = stack.pop()
@@ -286,27 +286,27 @@ def _reg_paths(path, max_keys=60):
 
 
 def _reg_candidate(path, category, reason):
-    """Clave candidata, o None si sus valores apuntan a archivos que siguen existiendo."""
+    """Candidate key, or None if its values point to files that still exist."""
     paths = [p for p in _reg_paths(path) if drive_exists(p)]
     if any(os.path.exists(p) for p in paths):
         return None
     if paths:
-        return _reg_item(path, category, reason + f" Apunta a ubicaciones que ya no existen (p. ej. {paths[0]}).",
-                         conf="media")
+        return _reg_item(path, category, reason + f" It points to locations that no longer exist (e.g. {paths[0]}).",
+                         conf="medium")
     return _reg_item(path, category, reason)
 
 
-# ---------------------------------------------------------------- escaneo completo
+# ---------------------------------------------------------------- full scan
 
 def scan(progress=lambda m: None):
     known, entries = build_known(progress)
     items = []
 
-    progress("Buscando entradas de desinstalación rotas…")
+    progress("Looking for broken uninstall entries…")
     for e in entries:
         if e.broken:
-            items.append(Item("regkey", e.key, "alta", "Entrada de desinstalación rota",
-                              f"«{e.name}» aparece como instalado pero su desinstalador ya no existe "
+            items.append(Item("regkey", e.key, "high", "Broken uninstall entry",
+                              f"\"{e.name}\" is listed as installed but its uninstaller no longer exists "
                               f"({e.uninstall_exe})."))
 
     for base in rules.APP_PATHS_KEYS:
@@ -315,25 +315,25 @@ def scan(progress=lambda m: None):
             default = reg_values(path).get("")
             exe = exe_from_command(str(default[0])) if default else None
             if exe and is_missing(exe):
-                items.append(Item("regkey", path, "alta", "Ruta de aplicación rota",
-                                  f"Registra «{sub}» apuntando a un archivo que ya no existe ({exe})."))
+                items.append(Item("regkey", path, "high", "Broken app path",
+                                  f"Registers \"{sub}\" pointing to a file that no longer exists ({exe})."))
 
-    progress("Buscando programas de inicio rotos…")
+    progress("Looking for broken startup entries…")
     for key in rules.RUN_KEYS:
         for name, (data, _kind) in reg_values(key).items():
             exe = exe_from_command(str(data))
             if exe and is_missing(exe):
-                items.append(Item("regvalue", key, "alta", "Inicio automático roto",
-                                  f"Intenta ejecutar al iniciar Windows un archivo que ya no existe ({exe}).",
+                items.append(Item("regvalue", key, "high", "Broken startup entry",
+                                  f"Tries to launch a file that no longer exists when Windows starts ({exe}).",
                                   value=name))
 
-    progress("Buscando accesos directos rotos…")
+    progress("Looking for broken shortcuts…")
     for path in list(_shortcuts(rules.SHORTCUT_DIRS)) + list(_shortcuts(rules.DESKTOP_DIRS, recursive=False)):
         if path.lower().endswith(".lnk"):
             t = lnk.target(path)
             if t and is_missing(t):
-                items.append(Item("file", path, "alta", "Acceso directo roto",
-                                  f"Apunta a un archivo que ya no existe ({t}).",
+                items.append(Item("file", path, "high", "Broken shortcut",
+                                  f"Points to a file that no longer exists ({t}).",
                                   size=_file_size(path)))
     for d in rules.SHORTCUT_DIRS:
         for root, subdirs, files in os.walk(d, topdown=False):
@@ -341,13 +341,13 @@ def scan(progress=lambda m: None):
                 continue
             try:
                 if not os.listdir(root):
-                    items.append(Item("folder", root, "alta", "Carpeta vacía del menú Inicio",
-                                      "Carpeta del menú Inicio sin ningún acceso directo."))
+                    items.append(Item("folder", root, "high", "Empty Start menu folder",
+                                      "Start menu folder without any shortcut."))
             except OSError:
                 pass
 
     for root, label, base_conf in rules.FOLDER_ROOTS:
-        progress(f"Analizando carpetas: {label}…")
+        progress(f"Scanning folders: {label}…")
         for entry in list_dirs(root):
             if rules.is_safe_folder(entry.name):
                 continue
@@ -360,15 +360,15 @@ def scan(progress=lambda m: None):
                         continue
                     if known.folder_status(child.name, child.path, child=True) == "orphan":
                         items.append(_folder_item(
-                            child.path, "baja", f"Carpeta huérfana · {label}",
-                            f"El fabricante «{entry.name}» tiene otros programas instalados, "
-                            f"pero ninguno usa esta carpeta."))
+                            child.path, "low", f"Orphan folder · {label}",
+                            f"The publisher \"{entry.name}\" has other programs installed, "
+                            f"but none of them uses this folder."))
                 continue
-            items.append(_folder_item(entry.path, base_conf, f"Carpeta huérfana · {label}",
-                                      "Ningún programa instalado ni en ejecución coincide con esta carpeta."))
+            items.append(_folder_item(entry.path, base_conf, f"Orphan folder · {label}",
+                                      "No installed or running program matches this folder."))
 
     for base, label in rules.REG_ROOTS:
-        progress(f"Analizando {label}…")
+        progress(f"Scanning {label}…")
         for sub in reg_subkeys(base):
             if rules.is_safe_reg(sub):
                 continue
@@ -379,14 +379,14 @@ def scan(progress=lambda m: None):
             if match == "publisher":
                 for child in reg_subkeys(path):
                     if known.match_name(child) != "product":
-                        items.append(_reg_candidate(f"{path}\\{child}", f"Clave huérfana · {label}",
-                                                    f"El fabricante «{sub}» tiene otros programas instalados, "
-                                                    f"pero ninguno coincide con esta clave."))
+                        items.append(_reg_candidate(f"{path}\\{child}", f"Orphan key · {label}",
+                                                    f"The publisher \"{sub}\" has other programs installed, "
+                                                    f"but none of them matches this key."))
                 continue
-            items.append(_reg_candidate(path, f"Clave huérfana · {label}",
-                                        "Ningún programa instalado coincide con esta clave."))
+            items.append(_reg_candidate(path, f"Orphan key · {label}",
+                                        "No installed program matches this key."))
 
-    progress("Escaneo terminado.")
+    progress("Scan finished.")
     return _dedupe([i for i in items if i is not None])
 
 
@@ -406,17 +406,17 @@ def _dedupe(items):
     return out
 
 
-# ---------------------------------------------------------------- búsqueda por nombre
+# ---------------------------------------------------------------- search by name
 
 def search(term, progress=lambda m: None):
-    """Busca restos de un programa concreto por su nombre.
+    """Look for the leftovers of a specific program by name.
 
-    Devuelve (elementos, nombres_instalados_que_coinciden)."""
+    Returns (items, installed_names_that_match)."""
     t = norm(term)
     if len(t) < 3:
-        raise ValueError("Escribe al menos 3 letras o números.")
+        raise ValueError("Type at least 3 letters or digits.")
     if t in rules.BLOCKED_TERMS:
-        raise ValueError(f"«{term}» es demasiado genérico; podría coincidir con componentes de Windows.")
+        raise ValueError(f"\"{term}\" is too generic; it could match Windows components.")
 
     known, entries = build_known(progress)
     still_installed = sorted({e.name for e in entries if not e.broken and e.name and t in norm(e.name)})
@@ -424,23 +424,23 @@ def search(term, progress=lambda m: None):
 
     def conf_for(path=None):
         if path and known.path_inside(path):
-            return "baja", "Lo usa un programa instalado o en ejecución."
+            return "low", "Used by an installed or running program."
         if still_installed:
-            return "baja", "Hay un programa instalado con un nombre parecido."
-        return "media", f"Su nombre coincide con «{term}»."
+            return "low", "A program with a similar name is still installed."
+        return "medium", f"Its name matches \"{term}\"."
 
-    progress("Buscando en entradas de desinstalación…")
+    progress("Searching uninstall entries…")
     for e in entries:
         if e.name and t in norm(e.name) and e.broken:
-            items.append(Item("regkey", e.key, "alta", "Entrada de desinstalación rota",
-                              f"«{e.name}»: su desinstalador ya no existe."))
+            items.append(Item("regkey", e.key, "high", "Broken uninstall entry",
+                              f"\"{e.name}\": its uninstaller no longer exists."))
 
     search_roots = [(r, label, 3) for r, label, _ in rules.FOLDER_ROOTS]
-    search_roots += [(rules.DOCUMENTS, "Documentos", 2), (rules.USER_PROFILE, "Perfil de usuario", 1)]
+    search_roots += [(rules.DOCUMENTS, "Documents", 2), (rules.USER_PROFILE, "User profile", 1)]
     for root, label, depth in search_roots:
         if not root or not os.path.isdir(root):
             continue
-        progress(f"Buscando carpetas en {label}…")
+        progress(f"Searching folders in {label}…")
         stack = [(root, 1)]
         while stack:
             folder, level = stack.pop()
@@ -449,12 +449,12 @@ def search(term, progress=lambda m: None):
                 if t in n and n not in rules.SAFE_FOLDER_NAMES and not _is_protected(entry.path):
                     conf, reason = conf_for(entry.path)
                     if npath(root) == npath(rules.DOCUMENTS):
-                        conf, reason = "baja", reason + " Está en Documentos: revisa que no sean archivos tuyos."
-                    items.append(_folder_item(entry.path, conf, f"Coincidencia · {label}", reason))
+                        conf, reason = "low", reason + " It is in Documents: make sure these are not your files."
+                    items.append(_folder_item(entry.path, conf, f"Match · {label}", reason))
                 elif level < depth and n not in _NO_DESCEND:
                     stack.append((entry.path, level + 1))
 
-    progress("Buscando en el registro…")
+    progress("Searching the registry…")
     for base, label in rules.REG_ROOTS:
         stack = [(base, 1)]
         while stack:
@@ -465,40 +465,40 @@ def search(term, progress=lambda m: None):
                 path = f"{key}\\{sub}"
                 if t in norm(sub):
                     conf, reason = conf_for()
-                    items.append(_reg_item(path, f"Coincidencia · {label}", reason, conf))
+                    items.append(_reg_item(path, f"Match · {label}", reason, conf))
                 elif level < 3:
                     stack.append((path, level + 1))
     for base in rules.APP_PATHS_KEYS:
         for sub in reg_subkeys(base):
             if t in norm(sub):
                 conf, reason = conf_for()
-                items.append(Item("regkey", f"{base}\\{sub}", conf, "Ruta de aplicación", reason))
+                items.append(Item("regkey", f"{base}\\{sub}", conf, "App path", reason))
     for key in rules.RUN_KEYS:
         for name, (data, _kind) in reg_values(key).items():
             if t in norm(name) or t in norm(str(data)):
                 exe = exe_from_command(str(data))
-                conf, reason = ("alta", "Su archivo ya no existe.") if exe and is_missing(exe) else conf_for()
-                items.append(Item("regvalue", key, conf, "Inicio automático", reason, value=name))
+                conf, reason = ("high", "Its file no longer exists.") if exe and is_missing(exe) else conf_for()
+                items.append(Item("regvalue", key, conf, "Startup entry", reason, value=name))
 
-    progress("Buscando accesos directos…")
+    progress("Searching shortcuts…")
     for d in rules.SHORTCUT_DIRS + rules.DESKTOP_DIRS:
         recursive = d in rules.SHORTCUT_DIRS
         for root, subdirs, files in (os.walk(d) if recursive else [(d, [], _safe_listdir(d))]):
             for name in subdirs:
                 if t in norm(name) and npath(os.path.join(root, name)) not in rules.PROTECTED_DIRS:
-                    items.append(_folder_item(os.path.join(root, name), "media", "Carpeta del menú Inicio",
-                                              f"Su nombre coincide con «{term}»."))
+                    items.append(_folder_item(os.path.join(root, name), "medium", "Start menu folder",
+                                              f"Its name matches \"{term}\"."))
             for name in files:
                 p = os.path.join(root, name)
                 if t in norm(os.path.splitext(name)[0]) and name.lower().endswith((".lnk", ".url")):
                     tg = lnk.target(p) if name.lower().endswith(".lnk") else None
                     if tg and is_missing(tg):
-                        conf, reason = "alta", f"Acceso directo roto ({tg})."
+                        conf, reason = "high", f"Broken shortcut ({tg})."
                     else:
                         conf, reason = conf_for()
-                    items.append(Item("file", p, conf, "Acceso directo", reason, size=_file_size(p)))
+                    items.append(Item("file", p, conf, "Shortcut", reason, size=_file_size(p)))
 
-    progress("Búsqueda terminada.")
+    progress("Search finished.")
     return _drop_nested(_dedupe(items)), still_installed
 
 
@@ -518,7 +518,7 @@ def _is_protected(path):
 
 
 def _drop_nested(items):
-    """Quita carpetas que ya están incluidas dentro de otra carpeta de la lista."""
+    """Drop folders that are already included inside another folder of the list."""
     folders = sorted(npath(i.path) for i in items if i.kind == "folder")
     out = []
     for it in items:
@@ -535,10 +535,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         found, installed = search(" ".join(sys.argv[1:]), progress=lambda m: print("·", m))
         if installed:
-            print("Sigue instalado:", ", ".join(installed))
+            print("Still installed:", ", ".join(installed))
     else:
         found = scan(progress=lambda m: print("·", m))
-    order = {"alta": 0, "media": 1, "baja": 2}
+    order = {"high": 0, "medium": 1, "low": 2}
     for it in sorted(found, key=lambda i: (order[i.confidence], i.category, i.path.lower())):
-        print(f"[{it.confidence:5}] {it.category:45} {it.display_path}  ({it.size // 1024} KB)\n        {it.reason}")
-    print(f"\n{len(found)} elementos encontrados.")
+        print(f"[{it.confidence:6}] {it.category:42} {it.display_path}  ({it.size // 1024} KB)\n         {it.reason}")
+    print(f"\n{len(found)} items found.")

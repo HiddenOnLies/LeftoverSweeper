@@ -1,4 +1,4 @@
-"""Utilidades de Windows: registro, carpetas conocidas, procesos y rutas."""
+"""Windows helpers: registry, known folders, processes and paths."""
 import ctypes
 import os
 import re
@@ -11,12 +11,12 @@ ROOTS = {
     "HKLM": winreg.HKEY_LOCAL_MACHINE,
 }
 
-# Siempre vemos el registro de 64 bits; la vista de 32 bits se recorre
-# explícitamente a través de SOFTWARE\WOW6432Node.
+# Always use the 64-bit registry view; the 32-bit view is walked
+# explicitly through SOFTWARE\WOW6432Node.
 _VIEW = winreg.KEY_WOW64_64KEY
 
 
-# ---------------------------------------------------------------- registro
+# ---------------------------------------------------------------- registry
 
 def reg_open(path, access=winreg.KEY_READ):
     root, _, sub = path.partition("\\")
@@ -48,7 +48,7 @@ def reg_subkeys(path):
 
 
 def reg_values(path):
-    """Devuelve {nombre: (dato, tipo)} de una clave."""
+    """Return {name: (data, type)} for a key."""
     out = {}
     try:
         with reg_open(path) as key:
@@ -74,7 +74,7 @@ def reg_is_empty(path):
         return False
 
 
-# ---------------------------------------------------------------- sistema
+# ---------------------------------------------------------------- system
 
 def is_admin():
     try:
@@ -93,7 +93,7 @@ class _GUID(ctypes.Structure):
 
 
 def known_folder(guid, fallback):
-    """Ruta de una carpeta conocida (respeta redirecciones como OneDrive)."""
+    """Path of a known folder (honours redirections such as OneDrive)."""
     try:
         u = uuid.UUID(guid)
         g = _GUID(u.fields[0], u.fields[1], u.fields[2], (ctypes.c_ubyte * 8)(*u.bytes[8:]))
@@ -112,7 +112,7 @@ def known_folder(guid, fallback):
 
 
 def running_exe_paths():
-    """Rutas de los ejecutables de los procesos en marcha."""
+    """Executable paths of the running processes."""
     out = []
     try:
         psapi = ctypes.WinDLL("psapi")
@@ -144,17 +144,17 @@ def running_exe_paths():
     return out
 
 
-# ---------------------------------------------------------------- rutas
+# ---------------------------------------------------------------- paths
 
 _EXE_RE = re.compile(r"(.+?\.(?:exe|com|bat|cmd|dll|sys|msc|vbs|ps1|cpl|scr))(?=\s|,|$)", re.I)
 _ABS_RE = re.compile(r"^[a-zA-Z]:\\")
 
 
 def exe_from_command(cmd):
-    """Extrae la ruta absoluta del ejecutable de una línea de comandos.
+    """Extract the absolute executable path from a command line.
 
-    Devuelve None si no se puede determinar con seguridad (así nunca se
-    considera «rota» una entrada que simplemente no supimos interpretar).
+    Returns None when it cannot be determined reliably, so an entry we merely
+    failed to parse is never reported as "broken".
     """
     if not isinstance(cmd, str):
         return None
@@ -184,8 +184,8 @@ def drive_exists(path):
 
 
 def is_missing(path):
-    """True solo si la unidad existe y el archivo no (evita falsos positivos
-    con unidades extraíbles o de red desconectadas)."""
+    """True only if the drive exists and the file does not (avoids false
+    positives with disconnected removable or network drives)."""
     return bool(path) and drive_exists(path) and not os.path.exists(path)
 
 
@@ -205,7 +205,7 @@ def is_link_or_junction(entry):
 
 
 def list_dirs(path):
-    """Subcarpetas reales (sin enlaces ni uniones) de una carpeta."""
+    """Real subfolders of a folder (no symlinks or junctions)."""
     out = []
     try:
         with os.scandir(path) as it:
@@ -221,7 +221,7 @@ def list_dirs(path):
 
 
 def folder_stats(path, max_entries=150_000):
-    """(tamaño, nº archivos, fecha más reciente, truncado, hubo_errores)."""
+    """(size, file count, newest mtime, truncated, had_errors)."""
     size = files = count = 0
     newest = 0.0
     truncated = errors = False
@@ -238,7 +238,7 @@ def folder_stats(path, max_entries=150_000):
                         break
                     try:
                         if is_link_or_junction(e):
-                            files += 1  # cuenta como contenido: nunca «vacía»
+                            files += 1  # counts as content: never "empty"
                             continue
                         if e.is_dir(follow_symlinks=False):
                             stack.append(e.path)

@@ -1,15 +1,15 @@
-"""Reglas de seguridad: ubicaciones, nombres que nunca se tocan y rutas protegidas."""
+"""Safety rules: scanned locations, names that are never touched and protected paths."""
 import os
 import re
 
 from winutil import known_folder, npath
 
-APP_NAME = "LimpiaResiduos"
+APP_NAME = "LeftoverSweeper"
 APP_VERSION = "1.0.0"
 
 
 def norm(text):
-    """Normaliza un nombre para compararlo: minúsculas y solo letras/números."""
+    """Normalise a name for comparison: lowercase, letters and digits only."""
     return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
 
@@ -17,7 +17,7 @@ def _env(name, default=""):
     return os.environ.get(name, default)
 
 
-# ---------------------------------------------------------------- ubicaciones
+# ---------------------------------------------------------------- locations
 
 SYSTEM_DRIVE = _env("SystemDrive", "C:") + "\\"
 WINDIR = _env("SystemRoot", r"C:\Windows")
@@ -32,7 +32,7 @@ USER_PROGRAMS = os.path.join(LOCALAPPDATA, "Programs") if LOCALAPPDATA else ""
 PUBLIC = _env("PUBLIC", "")
 
 DATA_DIR = os.path.join(LOCALAPPDATA, APP_NAME)
-QUARANTINE_DIR = os.path.join(DATA_DIR, "Cuarentena")
+QUARANTINE_DIR = os.path.join(DATA_DIR, "Quarantine")
 
 START_MENU_USER = known_folder("A77F5D77-2E2B-44C3-A6A2-ABA601054A51",
                                os.path.join(APPDATA, r"Microsoft\Windows\Start Menu\Programs"))
@@ -55,18 +55,18 @@ def _dedupe(paths):
     return out
 
 
-# Ubicaciones donde los programas dejan carpetas: (ruta, etiqueta, confianza base)
+# Places where programs leave folders behind: (path, label, base confidence)
 FOLDER_ROOTS = [
     (r, label, conf) for r, label, conf in [
-        (PROGRAM_FILES, "Archivos de programa", "media"),
-        (PROGRAM_FILES_X86, "Archivos de programa (x86)", "media"),
-        (USER_PROGRAMS, "Programas del usuario", "media"),
-        (os.path.join(PROGRAM_FILES, "Common Files"), "Archivos comunes", "baja"),
-        (os.path.join(PROGRAM_FILES_X86, "Common Files") if PROGRAM_FILES_X86 else "", "Archivos comunes (x86)", "baja"),
-        (PROGRAM_DATA, "ProgramData", "baja"),
-        (APPDATA, "AppData\\Roaming", "baja"),
-        (LOCALAPPDATA, "AppData\\Local", "baja"),
-        (LOCALLOW, "AppData\\LocalLow", "baja"),
+        (PROGRAM_FILES, "Program Files", "medium"),
+        (PROGRAM_FILES_X86, "Program Files (x86)", "medium"),
+        (USER_PROGRAMS, "User programs", "medium"),
+        (os.path.join(PROGRAM_FILES, "Common Files"), "Common Files", "low"),
+        (os.path.join(PROGRAM_FILES_X86, "Common Files") if PROGRAM_FILES_X86 else "", "Common Files (x86)", "low"),
+        (PROGRAM_DATA, "ProgramData", "low"),
+        (APPDATA, "AppData\\Roaming", "low"),
+        (LOCALAPPDATA, "AppData\\Local", "low"),
+        (LOCALLOW, "AppData\\LocalLow", "low"),
     ] if r and os.path.isdir(r)
 ]
 _seen = set()
@@ -76,9 +76,9 @@ SHORTCUT_DIRS = _dedupe([START_MENU_USER, START_MENU_COMMON])
 DESKTOP_DIRS = _dedupe([DESKTOP_USER, DESKTOP_PUBLIC])
 
 REG_ROOTS = [
-    ("HKCU\\Software", "Registro (usuario)"),
-    ("HKLM\\SOFTWARE", "Registro (equipo)"),
-    ("HKLM\\SOFTWARE\\WOW6432Node", "Registro (equipo, 32 bits)"),
+    ("HKCU\\Software", "Registry (user)"),
+    ("HKLM\\SOFTWARE", "Registry (machine)"),
+    ("HKLM\\SOFTWARE\\WOW6432Node", "Registry (machine, 32-bit)"),
 ]
 
 UNINSTALL_KEYS = [
@@ -103,9 +103,9 @@ RUN_KEYS = [
 ]
 
 
-# ---------------------------------------------------------------- nombres seguros
+# ---------------------------------------------------------------- safe names
 
-# Carpetas del sistema o compartidas que nunca se proponen como residuo.
+# System or shared folders that are never reported as leftovers.
 SAFE_FOLDER_NAMES = {norm(n) for n in [
     APP_NAME, "Common Files", "Internet Explorer", "Windows Defender", "Windows Defender Advanced Threat Protection",
     "WindowsApps", "ModifiableWindowsApps", "Windows Mail", "Windows Media Player", "Windows Multimedia Platform",
@@ -120,7 +120,7 @@ SAFE_FOLDER_NAMES = {norm(n) for n in [
     "Startup", "Inicio",
 ]}
 
-# Prefijos de fabricantes del sistema/hardware que se tratan como seguros.
+# System/hardware vendor prefixes that are treated as safe.
 SAFE_PREFIXES = ("microsoft", "windows", "msft", "regid", "intel", "nvidia", "realtek", "amd")
 
 SAFE_REG_NAMES = {norm(n) for n in [
@@ -133,20 +133,20 @@ SAFE_REG_NAMES = {norm(n) for n in [
     "Package Cache", APP_NAME,
 ]}
 
-# Claves que el limpiador jamás borra, aunque el usuario las marque.
+# Keys the cleaner never deletes, even if the user ticks them.
 CRITICAL_REG_NAMES = {norm(n) for n in [
     "Microsoft", "Classes", "Policies", "Wow6432Node", "Clients", "RegisteredApplications", "ODBC",
     "Description", "Windows",
 ]}
 
-# Términos demasiado genéricos para la búsqueda por nombre.
+# Terms too generic for the search by name.
 BLOCKED_TERMS = {norm(n) for n in [
     "microsoft", "windows", "system", "system32", "program", "programs", "programa", "files", "common", "app",
     "apps", "data", "local", "roaming", "software", "users", "user", "temp", "cache", "config", "update",
     "setup", "install", "driver", "drivers", "documents", "desktop", "appdata", "programdata", "classes",
 ]}
 
-# Carpetas estándar del perfil de usuario (protegidas).
+# Standard user profile folders (protected). Includes localised Spanish names.
 _PROFILE_STD = ["Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos", "OneDrive", "AppData",
                 "Contacts", "Favorites", "Links", "Saved Games", "Searches", "3D Objects", "Escritorio",
                 "Documentos", "Descargas", "Música", "Imágenes", "Vídeos"]
@@ -162,7 +162,7 @@ def is_safe_reg(name):
     return not n or n in SAFE_REG_NAMES or n.startswith(SAFE_PREFIXES)
 
 
-# ---------------------------------------------------------------- protección del limpiador
+# ---------------------------------------------------------------- cleaner protection
 
 def _protected_dirs():
     dirs = [SYSTEM_DRIVE, WINDIR, PROGRAM_FILES, PROGRAM_FILES_X86, PROGRAM_DATA, USER_PROFILE,
@@ -190,38 +190,38 @@ def _under(path, root):
 
 
 def check_fs_path(path):
-    """Lanza ValueError si la ruta no se puede tocar con seguridad."""
+    """Raise ValueError if the path cannot be touched safely."""
     p = npath(path)
     if not os.path.isabs(p) or len(p) <= 3:
-        raise ValueError("Ruta no válida o raíz de unidad.")
+        raise ValueError("Invalid path or drive root.")
     if p in PROTECTED_DIRS or any(_under(d, p) for d in PROTECTED_DIRS):
-        raise ValueError("Es una carpeta protegida del sistema o contiene una.")
+        raise ValueError("It is a protected system folder or contains one.")
     if _under(p, npath(WINDIR)) or _under(p, npath(QUARANTINE_DIR)):
-        raise ValueError("Está dentro de Windows o de la propia cuarentena.")
+        raise ValueError("It is inside Windows or inside the quarantine itself.")
     if not any(_under(p, r) for r in ALLOWED_FS_ROOTS):
-        raise ValueError("Está fuera de las ubicaciones que analiza la aplicación.")
+        raise ValueError("It is outside the locations this app scans.")
     if norm(os.path.basename(p)) in SAFE_FOLDER_NAMES:
-        raise ValueError("Es una carpeta compartida o del sistema.")
+        raise ValueError("It is a shared or system folder.")
 
 
 _REG_RE = re.compile(r"^(HKCU|HKLM)\\SOFTWARE\\(?:WOW6432NODE\\)?(.+)$", re.I)
 
 
 def check_reg_path(path, kind):
-    """Lanza ValueError si la clave/valor del registro no se puede tocar."""
+    """Raise ValueError if the registry key/value cannot be touched."""
     m = _REG_RE.match(path)
     if not m:
-        raise ValueError("Solo se permiten claves dentro de SOFTWARE.")
+        raise ValueError("Only keys inside SOFTWARE are allowed.")
     parts = [x.upper() for x in m.group(2).split("\\")]
     cv = ["MICROSOFT", "WINDOWS", "CURRENTVERSION"]
     if kind == "regvalue":
         if parts[:3] == cv and len(parts) == 4 and parts[3] in ("RUN", "RUNONCE"):
             return
-        raise ValueError("Solo se permiten valores de las claves de inicio (Run).")
+        raise ValueError("Only values of the startup (Run) keys are allowed.")
     if parts[:3] == cv and len(parts) == 5 and parts[3] in ("UNINSTALL", "APP PATHS"):
         return
     if norm(parts[0]) in CRITICAL_REG_NAMES:
-        raise ValueError("Es una clave crítica del sistema.")
+        raise ValueError("It is a critical system key.")
 
 
 def requires_admin(item):
