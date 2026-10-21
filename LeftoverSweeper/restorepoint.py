@@ -8,8 +8,10 @@ it still predates the cleaning.
 import ctypes
 import json
 import os
+import shutil
 import subprocess
 import tempfile
+import uuid
 from ctypes import wintypes
 
 import rules
@@ -117,9 +119,22 @@ def _run_elevated(args):
     return True
 
 
+def _exchange_dir():
+    """Folder shared with the elevated PowerShell.
+
+    Not tempfile.mkdtemp: since Python 3.13 it restricts the folder to SYSTEM, Administrators
+    and the owner, and a file written by an elevated process is owned by Administrators, so
+    the non-elevated app could not read the result back. A plain mkdir inherits %TEMP%'s
+    permissions, which give the current user full control."""
+    path = os.path.join(tempfile.gettempdir(), f"{rules.APP_NAME}-{uuid.uuid4().hex[:12]}")
+    os.mkdir(path)
+    return path
+
+
 def create(desc):
     """Create a restore point. Always returns a RestorePointResult (never raises)."""
-    with tempfile.TemporaryDirectory(prefix=f"{rules.APP_NAME}-") as tmp:
+    tmp = _exchange_dir()
+    try:
         script = os.path.join(tmp, "restorepoint.ps1")
         result_path = os.path.join(tmp, "result.json")
         with open(script, "w", encoding="utf-8-sig") as f:
@@ -138,6 +153,8 @@ def create(desc):
             return RestorePointResult({"error": "PowerShell did not report a result."})
         except Exception as e:
             return RestorePointResult({"error": str(e)})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def open_system_restore():
