@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import cleaner  # noqa: E402
+import qsearch  # noqa: E402
 import rules  # noqa: E402
 import scanner  # noqa: E402
 from winutil import is_admin  # noqa: E402
@@ -320,27 +321,54 @@ class App(tk.Tk):
         self.notebook.add(tab, text="  Quarantine  ")
         ttk.Label(tab, text="Removed items. You can put them back or delete them for good once you have "
                             "checked that everything works.").pack(fill="x")
+
+        find = ttk.Frame(tab)
+        find.pack(fill="x", pady=(8, 0))
+        ttk.Label(find, text="Find:").pack(side="left")
+        self.qsearch_var = tk.StringVar()
+        entry = ttk.Entry(find, textvariable=self.qsearch_var)
+        entry.pack(side="left", fill="x", expand=True, padx=6)
+        entry.bind("<KeyRelease>", lambda e: self._schedule_qfilter())
+        entry.bind("<<Paste>>", lambda e: self.after(10, self._schedule_qfilter))
+        entry.bind("<Escape>", lambda e: self._clear_qsearch())
+        ttk.Button(find, text="Clear", command=self._clear_qsearch).pack(side="left")
+        ttk.Label(tab, text="Type the program name, a file name (e.g. app.dll) or paste the full error message "
+                            "the program showed you. Best matches come first.", foreground="#666"
+                  ).pack(fill="x", pady=(2, 0))
+
         frame = ttk.Frame(tab)
         frame.pack(fill="both", expand=True, pady=8)
-        cols = (("date", "Date", 140), ("kind", "Type", 70), ("path", "Original location", 680),
-                ("size", "Size", 80))
+        cols = (("date", "Date", 140), ("kind", "Type", 70), ("path", "Original location", 560),
+                ("match", "Why it matches", 260), ("size", "Size", 80))
         self.qtree = ttk.Treeview(frame, columns=[c[0] for c in cols], show="headings", selectmode="extended")
         for col, title, width in cols:
             self.qtree.heading(col, text=title)
-            self.qtree.column(col, width=width, stretch=col == "path", anchor="e" if col == "size" else "w")
+            self.qtree.column(col, width=width, stretch=col in ("path", "match"), anchor="e" if col == "size" else "w")
+        self.qtree.tag_configure("best", foreground="#1a7f37")
         ys = ttk.Scrollbar(frame, orient="vertical", command=self.qtree.yview)
         self.qtree.configure(yscrollcommand=ys.set)
         self.qtree.pack(side="left", fill="both", expand=True)
         ys.pack(side="right", fill="y")
+        self.qtree.bind("<<TreeviewSelect>>", self._on_qselect)
+        self.qdetail = ttk.Label(tab, text="", justify="left", foreground="#444", wraplength=1000)
+        self.qdetail.pack(fill="x", pady=(0, 6))
+        tab.bind("<Configure>", lambda e: self.qdetail.configure(wraplength=max(300, e.width - 30)))
+
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         ttk.Button(bar, text="Refresh", command=self.refresh_quarantine).pack(side="left")
-        ttk.Button(bar, text="Open quarantine folder", command=self.open_quarantine_dir).pack(side="left", padx=6)
+        ttk.Button(bar, text="Select all shown", command=lambda: self.qtree.selection_set(self.qtree.get_children())
+                   ).pack(side="left", padx=6)
+        ttk.Button(bar, text="Open quarantine folder", command=self.open_quarantine_dir).pack(side="left")
         for text, cmd in (("Delete permanently", self.purge_selected), ("Restore", self.restore_selected)):
             btn = ttk.Button(bar, text=text, command=cmd)
             btn.pack(side="right", padx=(6, 0))
             self.action_buttons.append(btn)
         self.qentries = {}
+        self.qall = []
+        self.qindex = {}
+        self.qreasons = {}
+        self._qfilter_job = None
 
     def _build_status(self):
         bar = ttk.Frame(self, padding=(12, 6))
@@ -536,15 +564,71 @@ class App(tk.Tk):
         self.run_task(work, done)
 
     def refresh_quarantine(self):
+        self.qall = cleaner.list_quarantine()
+        alive = {(sdir, rec["id"]) for sdir, rec in self.qall}
+        self.qindex = {k: v for k, v in self.qindex.items() if k in alive}
+        self.notebook.tab(2, text=f"  Quarantine ({len(self.qall)})  ")
+        self._apply_qfilter()
+
+    def _schedule_qfilter(self):
+        if self._qfilter_job:
+            self.after_cancel(self._qfilter_job)
+        self._qfilter_job = self.after(300, self._apply_qfilter)
+
+    def _clear_qsearch(self):
+        self.qsearch_var.set("")
+        self._apply_qfilter()
+
+    def _apply_qfilter(self):
+        self._qfilter_job = None
+        query = self.qsearch_var.get()
+        if query.strip() and qsearch.needs_indexing(self.qall, self.qindex):
+            if self.busy:  # try again once the running task ends
+                self._qfilter_job = self.after(500, self._apply_qfilter)
+                return
+            entries, index = list(self.qall), self.qindex
+
+            def work(progress):
+                progress("Indexing the quarantine contents…")
+                return qsearch.search(entries, query, index)
+            self.run_task(work, lambda results: self._show_quarantine(results, query))
+            return
+        self._show_quarantine(qsearch.search(self.qall, query, self.qindex), query)
+
+    def _show_quarantine(self, results, query):
+        if query != self.qsearch_var.get():  # the text changed while indexing
+            self._apply_qfilter()
+            return
         self.qtree.delete(*self.qtree.get_children())
-        self.qentries = {}
-        for n, (sdir, rec) in enumerate(cleaner.list_quarantine()):
+        self.qentries, self.qreasons = {}, {}
+        best = results[0][1] if results and results[0][1] > 0 else None
+        for n, ((sdir, rec), score, why) in enumerate(results):
             iid = str(n)
             self.qentries[iid] = (sdir, rec)
+            self.qreasons[iid] = why
             path = f"{rec['path']}  →  {rec['value']}" if rec["kind"] == "regvalue" else rec["path"]
-            self.qtree.insert("", "end", iid=iid, values=(rec["date"], KIND_LABEL.get(rec["kind"], rec["kind"]),
-                                                          path, human_size(rec.get("size", 0))))
-        self.notebook.tab(2, text=f"  Quarantine ({len(self.qentries)})  ")
+            self.qtree.insert("", "end", iid=iid, tags=("best",) if best and score == best else (), values=(
+                rec["date"], KIND_LABEL.get(rec["kind"], rec["kind"]), path, "; ".join(dict.fromkeys(why)),
+                human_size(rec.get("size", 0))))
+        self.qdetail.configure(text="")
+        if query.strip() and not qsearch.parse_query(query):
+            self.status.configure(text="Nothing specific to search for: include the program name, a file name "
+                                       "or the full error message.")
+        elif query.strip():
+            self.status.configure(text=f"{len(results)} of {plural(len(self.qall), 'quarantined item')} match "
+                                       "your search." if results else "Nothing in the quarantine matches your search.")
+
+    def _on_qselect(self, _event):
+        sel = self.qtree.selection()
+        if not sel or sel[0] not in self.qentries:
+            return
+        _sdir, rec = self.qentries[sel[0]]
+        why = list(dict.fromkeys(self.qreasons.get(sel[0], [])))
+        text = f"{rec['path']}" + (f"  →  {rec['value']}" if rec["kind"] == "regvalue" else "")
+        text += f"\nQuarantined on {rec['date']}. {rec.get('reason', '')}"
+        if why:
+            text += "\nMatches: " + "; ".join(why)
+        self.qdetail.configure(text=text)
 
     def _selected_quarantine(self):
         return [self.qentries[i] for i in self.qtree.selection() if i in self.qentries]

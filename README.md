@@ -47,6 +47,7 @@ One by one they weigh nothing. Together they add up to gigabytes of junk, a clut
 | 🎯 **Search by name** | Just removed "Wondershare"? Type it in and see everything it left behind. |
 | 🚦 **Confidence levels** | 🟢 High, 🟡 Medium or ⚪ Low. Only 🟢 High items, which are clearly broken, are ticked for you. |
 | 🧳 **Quarantine** | Nothing is brute-force deleted: it is moved somewhere safe and restored with one click. |
+| 🩺 **Find what broke it** | A program stopped working? Paste its error message into the Quarantine search and the items to restore come up first. |
 | 💾 **ZIP backup** | "Tick all and move" offers a backup with a name that makes sense: `LeftoverSweeper Backup 2026-10-21 14.30 (57 items).zip`. |
 | 🙈 **Ignore list** | Right-click › "Not a leftover" and it never shows up again. |
 
@@ -139,6 +140,7 @@ LeftoverSweeper/
 ├── app.py        User interface (tkinter)
 ├── scanner.py    Leftover detection (read-only)
 ├── cleaner.py    Quarantine, backups and restore
+├── qsearch.py    Quarantine search (names, files, error messages)
 ├── rules.py      What gets scanned and what is untouchable
 ├── winutil.py    Registry, known folders and processes
 └── lnk.py        .lnk shortcut reader
@@ -153,9 +155,17 @@ You can, and the app lets you, but it's not a great idea with ⚪ Low confidence
 </details>
 
 <details>
-<summary><b>I quarantined something and now a program is broken</b></summary>
+<summary><b>I quarantined something and now a program is broken. What do I restore?</b></summary>
 
-**Quarantine** tab › select it › **Restore**. It goes back exactly where it was. Then right-click › "Not a leftover" so it doesn't show up again.
+You don't need to know. Open the **Quarantine** tab and type into **Find**:
+
+| You type | It finds |
+|---|---|
+| `videomaster` | Everything whose name or location mentions it. |
+| `VideoMasterCore.dll` | The quarantined folder that **contains** that file, even if it's nested deep inside. |
+| The full error message, pasted as-is | The file names, paths and registry keys in the message are pulled out and the noise is ignored. Works with English and Spanish Windows messages. |
+
+For example, pasting *"The code execution cannot proceed because VideoMasterCore.dll was not found"* shows the `VideoMaster Pro` folder first, with *"contains bin\VideoMasterCore.dll"* as the reason. Select it › **Restore**, and it goes back exactly where it was. Afterwards, rescan and right-click › "Not a leftover" so it doesn't show up again.
 </details>
 
 <details>
