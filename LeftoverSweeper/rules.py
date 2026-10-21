@@ -5,7 +5,7 @@ import re
 from winutil import known_folder, npath
 
 APP_NAME = "LeftoverSweeper"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 def norm(text):

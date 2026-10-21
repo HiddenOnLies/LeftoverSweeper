@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import cleaner  # noqa: E402
 import qsearch  # noqa: E402
+import restorepoint  # noqa: E402
 import rules  # noqa: E402
 import scanner  # noqa: E402
 from winutil import is_admin  # noqa: E402
@@ -360,6 +361,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="Select all shown", command=lambda: self.qtree.selection_set(self.qtree.get_children())
                    ).pack(side="left", padx=6)
         ttk.Button(bar, text="Open quarantine folder", command=self.open_quarantine_dir).pack(side="left")
+        ttk.Button(bar, text="Open System Restore", command=self.open_system_restore).pack(side="left", padx=6)
         for text, cmd in (("Delete permanently", self.purge_selected), ("Restore", self.restore_selected)):
             btn = ttk.Button(bar, text=text, command=cmd)
             btn.pack(side="right", padx=(6, 0))
@@ -489,25 +491,92 @@ class App(tk.Tk):
             view.refresh()
             self.status.configure(text="Cancelled: nothing was moved.")
 
-        answer = messagebox.askyesnocancel(
-            rules.APP_NAME,
-            f"All {plural(len(items), 'item')} in the list ({self._size_text(items)}) have been ticked to be "
-            f"moved to the quarantine.{self._clean_warnings(items)}\n\n"
-            "Do you want to create a ZIP backup first?\n\n"
-            "•  Yes: choose where to save it, then the items are moved.\n"
-            "•  No: move them without an extra copy (they can still be restored from the quarantine).\n"
-            "•  Cancel: do nothing.",
-            icon="question", parent=self)
-        if answer is None:
+        options = self.ask_backup_options(items)
+        if options is None:
             cancel()
             return
         backup = None
-        if answer:
+        if options["zip"]:
             backup = self._ask_backup_path(items)
             if not backup:
                 cancel()
                 return
-        self._run_clean(view, items, backup)
+        if not options["restore_point"]:
+            self._run_clean(view, items, backup)
+            return
+
+        def after_restore_point(rp):
+            if rp.created:
+                self._run_clean(view, items, backup, rp_note=rp.describe())
+                return
+            question = "Move the items to the quarantine anyway?" if rp.usable else \
+                "Continue without a restore point? (The items can still be restored from the quarantine.)"
+            if messagebox.askyesno(rules.APP_NAME, f"{rp.describe()}\n\n{question}",
+                                   icon="info" if rp.usable else "warning", parent=self):
+                self._run_clean(view, items, backup, rp_note=rp.describe() if rp.usable else None)
+                return
+            cancel()
+            if rp.protection_off and messagebox.askyesno(
+                    rules.APP_NAME, "Open System Protection settings now to turn restore points on?", parent=self):
+                restorepoint.open_protection_settings()
+
+        def work(progress):
+            progress("Creating a Windows restore point… this can take a minute or two.")
+            return restorepoint.create(restorepoint.description(len(items)))
+        self.run_task(work, after_restore_point)
+
+    def ask_backup_options(self, items):
+        """Modal dialog. Returns {"restore_point": bool, "zip": bool}, or None if cancelled."""
+        dlg = tk.Toplevel(self)
+        dlg.title(rules.APP_NAME)
+        try:
+            dlg.iconbitmap(resource("icon.ico"))
+        except tk.TclError:
+            pass
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        body = ttk.Frame(dlg, padding=18)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Before moving {plural(len(items), 'item')}", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, wraplength=520, justify="left",
+                  text=f"All {plural(len(items), 'item')} in the list ({self._size_text(items)}) are ticked to be "
+                       f"moved to the quarantine.{self._clean_warnings(items)}\n\n"
+                       "How do you want to protect yourself first?").pack(anchor="w", pady=(6, 10))
+        rp_var, zip_var = tk.BooleanVar(value=True), tk.BooleanVar(value=True)
+        for var, title, hint in (
+                (rp_var, "Create a Windows restore point (recommended)",
+                 "Lets you roll back the registry and installed programs with Windows System Restore. "
+                 "Asks for administrator approval; Windows allows one new point every 24 hours."),
+                (zip_var, "Save a ZIP backup of the files and registry keys",
+                 "A copy you can keep anywhere, even on another drive. You choose where to save it.")):
+            ttk.Checkbutton(body, text=title, variable=var).pack(anchor="w")
+            ttk.Label(body, text=hint, wraplength=500, justify="left", foreground="#666"
+                      ).pack(anchor="w", padx=(24, 0), pady=(0, 8))
+        ttk.Label(body, wraplength=520, justify="left", foreground="#666",
+                  text="With both unticked the items are moved without an extra backup; they can still be "
+                       "restored from the Quarantine tab.").pack(anchor="w", pady=(2, 12))
+        result = {}
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x")
+
+        def close(ok):
+            if ok:
+                result.update(restore_point=rp_var.get(), zip=zip_var.get())
+            dlg.destroy()
+        ttk.Button(buttons, text="Cancel", command=lambda: close(False)).pack(side="right")
+        cont = ttk.Button(buttons, text="Continue", command=lambda: close(True))
+        cont.pack(side="right", padx=(0, 6))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: close(False))
+        dlg.bind("<Escape>", lambda e: close(False))
+        dlg.bind("<Return>", lambda e: close(True))
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 3
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        cont.focus_set()
+        dlg.grab_set()
+        self.wait_window(dlg)
+        return result or None
 
     def _ask_backup_path(self, items):
         os.makedirs(cleaner.BACKUP_DIR, exist_ok=True)
@@ -530,7 +599,7 @@ class App(tk.Tk):
             messagebox.showwarning(rules.APP_NAME, "Don't save the backup inside a folder that is about to be moved:\n"
                                    f"{inside[0].path}\n\nPick another location.", parent=self)
 
-    def _run_clean(self, view, items, backup=None):
+    def _run_clean(self, view, items, backup=None, rp_note=None):
         def work(progress):
             skipped = []
             if backup:
@@ -549,6 +618,8 @@ class App(tk.Tk):
             self.refresh_quarantine()
             summary = f"{plural(len(ok), 'item')} moved to the quarantine."
             self.status.configure(text=summary)
+            if rp_note:
+                summary += (f"\n\n{rp_note}\nTo roll back with it: Quarantine tab › Open System Restore.")
             if backup:
                 summary += f"\n\nBackup saved to:\n{backup}"
                 if skipped:
@@ -667,6 +738,16 @@ class App(tk.Tk):
         if len(rows) > 15:
             text += f"\n… and {len(rows) - 15} more."
         messagebox.showwarning(rules.APP_NAME, f"{title}\n\n{text}", parent=self)
+
+    def open_system_restore(self):
+        if messagebox.askokcancel(
+                rules.APP_NAME,
+                "Windows System Restore will open. Pick the restore point named "
+                f"\"{rules.APP_NAME}: before cleaning…\" to roll the registry and installed programs back "
+                "to how they were before that cleaning.\n\n"
+                "System Restore restarts the PC and does not touch your documents. Items in the quarantine stay "
+                "there; restore them from this tab if you need them too.", parent=self):
+            restorepoint.open_system_restore()
 
     def open_quarantine_dir(self):
         os.makedirs(rules.QUARANTINE_DIR, exist_ok=True)

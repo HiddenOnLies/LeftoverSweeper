@@ -48,7 +48,8 @@ One by one they weigh nothing. Together they add up to gigabytes of junk, a clut
 | 🚦 **Confidence levels** | 🟢 High, 🟡 Medium or ⚪ Low. Only 🟢 High items, which are clearly broken, are ticked for you. |
 | 🧳 **Quarantine** | Nothing is brute-force deleted: it is moved somewhere safe and restored with one click. |
 | 🩺 **Find what broke it** | A program stopped working? Paste its error message into the Quarantine search and the items to restore come up first. |
-| 💾 **ZIP backup** | "Tick all and move" offers a backup with a name that makes sense: `LeftoverSweeper Backup 2026-10-21 14.30 (57 items).zip`. |
+| ⏪ **Windows restore point** | Before a big cleanup, one click creates a System Restore point named `LeftoverSweeper: before cleaning 57 items`. |
+| 💾 **ZIP backup** | "Tick all and move" also offers a backup with a name that makes sense: `LeftoverSweeper Backup 2026-10-21 14.30 (57 items).zip`. |
 | 🙈 **Ignore list** | Right-click › "Not a leftover" and it never shows up again. |
 
 ## 🧠 How it tells junk from treasure
@@ -87,6 +88,16 @@ A few common-sense rules:
 - 🧱 **Hard-coded deny list**: even if you tick them, it refuses to touch Windows, Program Files, AppData, your profile, Documents, Desktop and critical keys such as `Microsoft`, `Classes` or `Policies`.
 
 Once you've checked that everything still works, empty the quarantine from its tab.
+
+### Three layers of undo
+
+**Tick all and move to quarantine…** asks how you want to protect yourself before anything moves:
+
+| | Undoes | How to go back | Good to know |
+|---|---|---|---|
+| 🧳 **Quarantine** (always on) | Every file, folder and registry entry it moved | Quarantine tab › **Restore** (use **Find** to locate items) | Lives in `%LOCALAPPDATA%\LeftoverSweeper\Quarantine` |
+| ⏪ **Windows restore point** | Registry and installed programs, system-wide | Quarantine tab › **Open System Restore** › pick *LeftoverSweeper: before cleaning…* | Asks for administrator approval. Windows allows one new point every 24 h; if one already exists, the app tells you its date. Needs System Protection turned on. Does not cover personal files in AppData. |
+| 💾 **ZIP backup** | Files and registry keys, as a portable copy | Copy `Files/` back, double-click the `.reg` files (see `README - How to restore.txt` inside) | Keep it on another drive or in the cloud |
 
 ## 🚀 Getting started
 
@@ -141,6 +152,7 @@ LeftoverSweeper/
 ├── scanner.py    Leftover detection (read-only)
 ├── cleaner.py    Quarantine, backups and restore
 ├── qsearch.py    Quarantine search (names, files, error messages)
+├── restorepoint.py  Windows System Restore points
 ├── rules.py      What gets scanned and what is untouchable
 ├── winutil.py    Registry, known folders and processes
 └── lnk.py        .lnk shortcut reader
